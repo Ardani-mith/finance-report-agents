@@ -149,3 +149,26 @@ Cara pakai di Telegram:
 - Kirim `/start` untuk membuka instruksi.
 - Kirim `/analyze` diikuti teks berita untuk analisis cepat.
 - Kirim file PDF/TXT/CSV/JSON/MD dan gunakan caption sebagai fokus analisis.
+
+## Deploy VPS
+
+Setelah perubahan terbaru sudah di-push ke GitHub, jalankan ini di VPS:
+
+```bash
+cd ~/finance-report-agents
+./scripts/deploy_vps.sh
+```
+
+Script ini akan:
+
+- `git pull --ff-only`
+- membuat `.venv` jika belum ada
+- install/update dependency dari `requirements.txt`
+- memastikan `.env` ada
+- restart bot di `screen` session `finance_report_bot`
+
+Jika folder project di VPS bukan `~/finance-report-agents`, jalankan:
+
+```bash
+APP_DIR=/path/ke/finance-report-agents ./scripts/deploy_vps.sh
+```
