@@ -9,7 +9,7 @@ from pathlib import Path
 from openai import APIConnectionError, APIStatusError, AuthenticationError, RateLimitError
 
 from telegram import Update
-from telegram.constants import ChatAction
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 from finance_agent.agent import FinancialAnalysisAgent
@@ -110,6 +110,7 @@ async def bullish_score(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     await update.message.chat.send_action(ChatAction.TYPING)
+    await update.message.reply_text("Sedang saya beri bullish score. Tunggu sebentar...")
     try:
         agent = FinancialAnalysisAgent(load_settings())
         result = agent.score_text(text=text, source="telegram_manual")
@@ -128,6 +129,7 @@ async def create_dataset_template(update: Update, context: ContextTypes.DEFAULT_
 
 async def index_alpha_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.chat.send_action(ChatAction.TYPING)
+    await update.message.reply_text("Sedang cek quota Index Alpha...")
     try:
         client = IndexAlphaClient(load_settings())
         result = format_usage(client.usage())
@@ -146,6 +148,7 @@ async def broker_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     await update.message.chat.send_action(ChatAction.TYPING)
+    await update.message.reply_text("Sedang ambil broker summary dan menyusun analisis...")
     try:
         client = IndexAlphaClient(load_settings())
         payload = client.broker_summary(request)
@@ -173,6 +176,7 @@ async def analyze_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     await update.message.chat.send_action(ChatAction.TYPING)
+    await update.message.reply_text("Sedang saya analisis. Tunggu sebentar...")
     try:
         agent = FinancialAnalysisAgent(load_settings())
         result = agent.analyze_text(question=question)
@@ -197,7 +201,7 @@ async def analyze_idx_report(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await update.message.chat.send_action(ChatAction.TYPING)
     await update.message.reply_text(
-        f"Saya coba cari laporan publik untuk {request.ticker}"
+        f"Saya mulai cari laporan publik untuk {request.ticker}"
         f"{f' {request.period}' if request.period else ''}. Ini mode best-effort tanpa API resmi IDX."
     )
 
@@ -241,6 +245,7 @@ async def analyze_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await telegram_file.download_to_drive(custom_path=local_path)
 
         await message.chat.send_action(ChatAction.TYPING)
+        await message.reply_text("File sudah diterima. Sedang saya baca dan analisis...")
         try:
             agent = FinancialAnalysisAgent(load_settings())
             result = agent.analyze(
@@ -257,7 +262,11 @@ async def analyze_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def _reply_long(update: Update, text: str) -> None:
     message = update.message
     for start_index in range(0, len(text), MAX_TELEGRAM_MESSAGE_LENGTH):
-        await message.reply_text(text[start_index : start_index + MAX_TELEGRAM_MESSAGE_LENGTH])
+        chunk = text[start_index : start_index + MAX_TELEGRAM_MESSAGE_LENGTH]
+        try:
+            await message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            await message.reply_text(chunk)
 
 
 async def _reply_error(update: Update, exc: Exception) -> None:
