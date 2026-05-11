@@ -32,7 +32,7 @@ def analyze(
     no_web_search: bool = typer.Option(
         False,
         "--no-web-search",
-        help="Matikan web search bawaan OpenAI dan hanya gunakan file + yfinance.",
+        help="Diabaikan untuk NVIDIA hosted API; market data tetap memakai yfinance.",
     ),
 ) -> None:
     settings = load_settings()
@@ -40,7 +40,7 @@ def analyze(
 
     console.print(
         Panel.fit(
-            f"File: {file_path}\nModel: {settings.openai_model}\nTickers: {', '.join(tickers)}",
+            f"File: {file_path}\nProvider: NVIDIA\nModel: {settings.nvidia_model}\nTickers: {', '.join(tickers)}",
             title="Menjalankan agent",
         )
     )
