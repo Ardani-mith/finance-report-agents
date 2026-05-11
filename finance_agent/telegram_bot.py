@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import fcntl
 import logging
+import sys
 import tempfile
 from pathlib import Path
 
@@ -20,6 +22,25 @@ from finance_agent.historical_dataset import dataset_template
 
 MAX_TELEGRAM_MESSAGE_LENGTH = 3900
 logger = logging.getLogger(__name__)
+_lock_file = None
+
+
+def acquire_single_instance_lock() -> None:
+    global _lock_file
+    lock_path = Path("logs/telegram_bot.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    _lock_file = lock_path.open("w")
+    try:
+        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(
+            "Bot Telegram sudah berjalan di proses lain. "
+            "Hentikan proses lama dulu sebelum menjalankan ulang.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    _lock_file.write(str(Path.cwd()))
+    _lock_file.flush()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -288,6 +309,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def main() -> None:
+    acquire_single_instance_lock()
     logging.basicConfig(level=logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

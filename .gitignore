@@ -6,3 +6,4 @@ __pycache__/
 reports/
 logs/
 dev_requests/inbox.jsonl
+logs/telegram_bot.lock
