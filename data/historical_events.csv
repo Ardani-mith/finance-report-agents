@@ -1,1 +1,2 @@
 created_at_utc,ticker,event_date,event_type,source,period,bullish_score,model_verdict,features_json,price_t0,price_t3,return_3d_pct,price_t7,return_7d_pct,label_3d_up_10pct,notes
+2026-05-12T07:48:33.725582+00:00,BBCA,2026-05-12,earnings_report,telegram_manual,,,,{},6100.0000,,,,,,laba kuat

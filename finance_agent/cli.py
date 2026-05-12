@@ -8,6 +8,7 @@ from rich.panel import Panel
 
 from finance_agent.agent import FinancialAnalysisAgent
 from finance_agent.config import load_settings
+from finance_agent.historical_dataset import dataset_template, enrich_price_labels, format_enrich_summary
 from finance_agent.market_data import DEFAULT_TICKERS
 
 app = typer.Typer(help="AI Agent untuk analisis laporan keuangan, berita, dan market global.")
@@ -53,6 +54,32 @@ def analyze(
     console.print(result)
 
 
+@app.command("dataset-template")
+def dataset_template_command(
+    output_path: Path = typer.Argument(
+        Path("data/historical_events.csv"),
+        help="Path CSV dataset historis.",
+    ),
+) -> None:
+    dataset_template(output_path)
+    console.print(f"Template dataset siap: {output_path}")
+
+
+@app.command("label-dataset")
+def label_dataset_command(
+    dataset_path: Path = typer.Argument(
+        Path("data/historical_events.csv"),
+        help="Path CSV dataset historis.",
+    ),
+    ticker_suffix: str = typer.Option(
+        ".JK",
+        "--ticker-suffix",
+        help="Suffix default ticker untuk saham IDX di Yahoo Finance.",
+    ),
+) -> None:
+    result = enrich_price_labels(dataset_path, ticker_suffix=ticker_suffix)
+    console.print(format_enrich_summary(result, dataset_path))
+
+
 if __name__ == "__main__":
     app()
-

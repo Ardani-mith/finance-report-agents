@@ -76,6 +76,42 @@ Setelah request diproses oleh Codex, bot Python perlu dijalankan ulang agar comm
 
 ## Bullish Scoring dan Training Dataset
 
+
+### Draft Event Otomatis
+
+
+### Draft Event Otomatis
+
+Setelah Anda mengirim file atau memakai `/idx`, bot sekarang otomatis membuat **draft event** berdasarkan isi dokumen, ticker, tanggal, dan tipe event yang terdeteksi. Event belum masuk dataset sampai Anda setujui.
+
+Telegram:
+
+```text
+/pending_events
+/approve_event EV-...
+/reject_event EV-...
+```
+
+Alurnya: analisis selesai -> bot kirim draft event -> Anda approve -> event masuk `historical_events.csv` -> lalu `/label_dataset` untuk isi outcome harga.
+
+### Auto-label Outcome Harga
+
+Sekarang dataset historis bisa diisi otomatis dengan harga penutupan `t0`, `t+3`, `t+7`, return 3 hari, return 7 hari, dan label apakah saham naik minimal 10 persen dalam 3 hari bursa.
+
+CLI:
+
+```bash
+python3 -m finance_agent.cli dataset-template
+python3 -m finance_agent.cli label-dataset
+```
+
+Telegram:
+
+```text
+/add_event BBCA 2026-05-12 earnings_report laba kuat
+/label_dataset
+```
+
 Untuk input manual seperti post StockbitReports yang Anda paste sendiri, bot mendukung:
 
 ```text

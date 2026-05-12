@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
 
 import yfinance as yf
+from pandas import DataFrame
 
 
 DEFAULT_TICKERS = [
@@ -31,6 +32,18 @@ class MarketPoint:
     change_percent: float | None
     currency: str | None
     market_state: str | None
+
+
+@dataclass(frozen=True)
+class ForwardPriceOutcome:
+    ticker: str
+    event_date: str
+    price_t0: float | None
+    price_t3: float | None
+    return_3d_pct: float | None
+    price_t7: float | None
+    return_7d_pct: float | None
+    label_3d_up_10pct: bool | None
 
 
 def fetch_market_snapshot(tickers: Iterable[str] = DEFAULT_TICKERS) -> dict:
@@ -87,6 +100,37 @@ def fetch_market_snapshot(tickers: Iterable[str] = DEFAULT_TICKERS) -> dict:
     }
 
 
+def fetch_forward_price_outcome(
+    ticker: str,
+    event_date: str,
+    date_to_t0: int = 0,
+    date_to_t3: int = 3,
+    date_to_t7: int = 7,
+) -> ForwardPriceOutcome:
+    event_dt = date.fromisoformat(event_date)
+    history = _fetch_price_history(ticker=ticker, event_dt=event_dt)
+    closes = _extract_close_series(history)
+
+    price_t0 = _close_at_or_after(closes, event_dt, trading_offset=date_to_t0)
+    price_t3 = _close_at_or_after(closes, event_dt, trading_offset=date_to_t3)
+    price_t7 = _close_at_or_after(closes, event_dt, trading_offset=date_to_t7)
+
+    return_3d = _calc_return_pct(price_t0, price_t3)
+    return_7d = _calc_return_pct(price_t0, price_t7)
+    label_3d = return_3d is not None and return_3d >= 10.0
+
+    return ForwardPriceOutcome(
+        ticker=ticker,
+        event_date=event_date,
+        price_t0=price_t0,
+        price_t3=price_t3,
+        return_3d_pct=return_3d,
+        price_t7=price_t7,
+        return_7d_pct=return_7d,
+        label_3d_up_10pct=label_3d if return_3d is not None else None,
+    )
+
+
 def format_market_snapshot(snapshot: dict) -> str:
     lines = [
         f"Market snapshot as of UTC: {snapshot['as_of_utc']}",
@@ -122,3 +166,38 @@ def _format_number(value: float | None) -> str:
         return "-"
     return f"{value:,.2f}"
 
+
+def _fetch_price_history(ticker: str, event_dt: date) -> DataFrame:
+    start = event_dt - timedelta(days=10)
+    end = event_dt + timedelta(days=20)
+    return yf.Ticker(ticker).history(start=start.isoformat(), end=end.isoformat(), auto_adjust=False)
+
+
+def _extract_close_series(history: DataFrame) -> list[tuple[date, float]]:
+    if history.empty or "Close" not in history:
+        return []
+
+    closes: list[tuple[date, float]] = []
+    for idx, row in history.iterrows():
+        close = _as_float(row.get("Close"))
+        if close is None:
+            continue
+        closes.append((idx.date(), close))
+    return closes
+
+
+def _close_at_or_after(
+    closes: list[tuple[date, float]],
+    event_dt: date,
+    trading_offset: int,
+) -> float | None:
+    eligible = [(dt, close) for dt, close in closes if dt >= event_dt]
+    if len(eligible) <= trading_offset:
+        return None
+    return eligible[trading_offset][1]
+
+
+def _calc_return_pct(price_start: float | None, price_end: float | None) -> float | None:
+    if price_start in (None, 0) or price_end is None:
+        return None
+    return ((price_end - price_start) / price_start) * 100

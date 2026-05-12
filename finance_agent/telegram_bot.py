@@ -14,11 +14,26 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 
 from finance_agent.agent import FinancialAnalysisAgent
 from finance_agent.config import load_settings, require_telegram_token
-from finance_agent.document_loader import SUPPORTED_FILE_EXTENSIONS
+from finance_agent.document_loader import SUPPORTED_FILE_EXTENSIONS, extract_document_text
 from finance_agent.dev_requests import create_dev_request, format_dev_request, format_dev_request_list, list_dev_requests
+from finance_agent.event_drafts import (
+    append_event_draft,
+    approve_event_draft,
+    create_event_draft_from_document,
+    format_event_draft,
+    format_event_draft_list,
+    list_event_drafts,
+    reject_event_draft,
+)
 from finance_agent.idx_research import IDXReportNotFound, find_and_download_idx_report, parse_idx_command
 from finance_agent.index_alpha import IndexAlphaClient, format_broker_summary, format_usage, parse_broker_summary_args
-from finance_agent.historical_dataset import dataset_template
+from finance_agent.historical_dataset import (
+    HistoricalEvent,
+    append_event,
+    dataset_template,
+    enrich_price_labels,
+    format_enrich_summary,
+)
 
 MAX_TELEGRAM_MESSAGE_LENGTH = 3900
 logger = logging.getLogger(__name__)
@@ -53,6 +68,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/indexalpha - cek quota Index Alpha\n"
         "/score TEKS - beri bullish score untuk berita/post\n"
         "/dataset_template - buat template dataset historis\n"
+        "/add_event TICKER YYYY-MM-DD TYPE - simpan event historis\n"
+        "/label_dataset - isi label harga t+3 dan t+7\n"
+        "/approve_event ID - setujui draft event\n"
+        "/reject_event ID - tolak draft event\n"
+        "/pending_events - lihat draft event\n"
         "/dev_request TEKS - simpan request coding untuk Codex\n"
         "/dev_requests - lihat request terakhir\n"
         "/help - cara pakai"
@@ -70,10 +90,46 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "5. Pakai /broker BBCA 2026-03-26 2026-03-26 all untuk broker summary Index Alpha.\n"
         "6. Pakai /indexalpha untuk cek quota API.\n"
         "7. Pakai /score lalu paste berita/post untuk bullish score.\n"
-        "8. Pakai /dev_request untuk menyimpan permintaan coding tanpa push GitHub.\n\n"
+        "8. Pakai /add_event untuk menyimpan event ke dataset historis.\n"
+        "9. Pakai /label_dataset untuk isi outcome harga otomatis.\n"
+        "10. Draft event akan dibuat otomatis setelah analisis dokumen; approve dengan /approve_event.\n"
+        "11. Pakai /dev_request untuk menyimpan permintaan coding tanpa push GitHub.\n\n"
         "Contoh: /idx ESIP FY2025 cek kualitas arus kas\n"
         f"Format file didukung: {extensions}"
     )
+
+
+async def approve_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("Format: /approve_event ID")
+        return
+    try:
+        approved = approve_event_draft(context.args[0])
+    except Exception as exc:
+        await _reply_error(update, exc)
+        return
+    await update.message.reply_text(
+        f"Event disetujui dan masuk dataset: {approved['ticker']} {approved['event_date']} {approved['event_type']}"
+    )
+
+
+async def reject_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("Format: /reject_event ID")
+        return
+    try:
+        rejected = reject_event_draft(context.args[0])
+    except Exception as exc:
+        await _reply_error(update, exc)
+        return
+    await update.message.reply_text(
+        f"Draft event ditolak: {rejected['id']}"
+    )
+
+
+async def show_pending_events(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    rows = list_event_drafts()
+    await update.message.reply_text(format_event_draft_list(rows))
 
 
 async def save_dev_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -119,6 +175,48 @@ async def bullish_score(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     await _reply_long(update, result)
+    if 'draft' in locals():
+        await message.reply_text(format_event_draft(draft))
+    if 'draft' in locals():
+        await update.message.reply_text(format_event_draft(draft))
+
+
+async def add_historical_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if len(context.args) < 3:
+        await update.message.reply_text(
+            "Format: /add_event TICKER YYYY-MM-DD TYPE [notes]. Contoh: /add_event BBCA 2026-05-12 earnings_report laba kuat"
+        )
+        return
+
+    ticker = context.args[0].upper()
+    event_date = context.args[1]
+    event_type = context.args[2]
+    notes = " ".join(context.args[3:]).strip()
+
+    event = HistoricalEvent(
+        ticker=ticker,
+        event_date=event_date,
+        event_type=event_type,
+        source="telegram_manual",
+        notes=notes,
+    )
+    dataset_path = Path("data/historical_events.csv")
+    dataset_template(dataset_path)
+    append_event(dataset_path, event)
+    await update.message.reply_text(f"Event tersimpan: {ticker} {event_date} {event_type}")
+
+
+async def label_historical_dataset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    dataset_path = Path("data/historical_events.csv")
+    await update.message.chat.send_action(ChatAction.TYPING)
+    await update.message.reply_text("Sedang isi label harga t+3 dan t+7 ke dataset...")
+    try:
+        result = enrich_price_labels(dataset_path)
+    except Exception as exc:
+        await _reply_error(update, exc)
+        return
+
+    await update.message.reply_text(format_enrich_summary(result, dataset_path))
 
 
 async def create_dataset_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -247,11 +345,19 @@ async def analyze_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await message.chat.send_action(ChatAction.TYPING)
         await message.reply_text("File sudah diterima. Sedang saya baca dan analisis...")
         try:
+            document_text = extract_document_text(local_path)
             agent = FinancialAnalysisAgent(load_settings())
             result = agent.analyze(
                 file_path=local_path,
                 question=message.caption,
             )
+            draft = create_event_draft_from_document(
+                file_name=file_name,
+                document_text=document_text,
+                question=message.caption,
+                source="telegram_document",
+            )
+            append_event_draft(draft)
         except Exception as exc:
             await _reply_error(update, exc)
             return
@@ -331,9 +437,14 @@ def main() -> None:
     application.add_handler(CommandHandler("analyze", analyze_text))
     application.add_handler(CommandHandler("indexalpha", index_alpha_usage))
     application.add_handler(CommandHandler("score", bullish_score))
+    application.add_handler(CommandHandler("approve_event", approve_event))
+    application.add_handler(CommandHandler("reject_event", reject_event))
+    application.add_handler(CommandHandler("pending_events", show_pending_events))
     application.add_handler(CommandHandler("dev_request", save_dev_request))
     application.add_handler(CommandHandler("dev_requests", show_dev_requests))
     application.add_handler(CommandHandler("dataset_template", create_dataset_template))
+    application.add_handler(CommandHandler("add_event", add_historical_event))
+    application.add_handler(CommandHandler("label_dataset", label_historical_dataset))
     application.add_handler(CommandHandler("broker", broker_summary))
     application.add_handler(CommandHandler("idx", analyze_idx_report))
     application.add_handler(MessageHandler(filters.Document.ALL, analyze_document))

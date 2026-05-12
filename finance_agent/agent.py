@@ -28,7 +28,13 @@ class FinancialAnalysisAgent:
         market_snapshot = fetch_market_snapshot(tickers or DEFAULT_TICKERS)
         formatted_market = format_market_snapshot(market_snapshot)
         document_text = extract_document_text(file_path)
-        prompt = build_user_prompt(question=question, market_snapshot=formatted_market)
+        document_type = detect_document_type(file_path=file_path, document_text=document_text, question=question)
+        prompt = build_user_prompt(
+            question=question,
+            market_snapshot=formatted_market,
+            document_type=document_type,
+            file_name=file_path.name,
+        )
 
         user_content = f"""
 {prompt}
@@ -64,3 +70,53 @@ Isi dokumen yang diekstrak dari file {file_path.name}:
             temperature=0.2,
         )
         return response.choices[0].message.content or ""
+
+
+def detect_document_type(file_path: Path, document_text: str, question: str | None = None) -> str:
+    haystack = "\n".join([file_path.name, question or "", document_text[:6000]]).lower()
+
+    if any(keyword in haystack for keyword in [
+        "laporan keuangan",
+        "financial statements",
+        "statement of profit or loss",
+        "arus kas",
+        "catatan atas laporan keuangan",
+        "balance sheet",
+        "neraca",
+    ]):
+        return "financial_report"
+
+    if any(keyword in haystack for keyword in [
+        "keterbukaan informasi",
+        "rights issue",
+        "private placement",
+        "akuisisi",
+        "merger",
+        "divestasi",
+        "tender offer",
+        "buyback",
+        "penambahan modal",
+    ]):
+        return "corporate_action"
+
+    if any(keyword in haystack for keyword in [
+        "presentation",
+        "public expose",
+        "paparan publik",
+        "investor presentation",
+        "company presentation",
+        "corporate presentation",
+    ]):
+        return "presentation"
+
+    if any(keyword in haystack for keyword in [
+        "news",
+        "berita",
+        "breaking",
+        "headline",
+        "press release",
+        "media release",
+    ]):
+        return "news"
+
+    return "general"
