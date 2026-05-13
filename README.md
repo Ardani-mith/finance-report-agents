@@ -90,9 +90,10 @@ Telegram:
 /pending_events
 /approve_event EV-...
 /reject_event EV-...
+/mark_outcome EV-... setelah terbit naik 13% dalam 3 hari
 ```
 
-Alurnya: analisis selesai -> bot kirim draft event -> Anda approve -> event masuk `historical_events.csv` -> lalu `/label_dataset` untuk isi outcome harga.
+Alurnya: analisis selesai -> bot kirim draft event -> jika live dan outcome akhirnya terbukti, pakai `/mark_outcome` -> approve -> event masuk `historical_events.csv` -> lalu `/label_dataset` untuk isi outcome harga otomatis.
 
 ### Auto-label Outcome Harga
 

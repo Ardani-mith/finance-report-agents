@@ -14,6 +14,9 @@ DATASET_COLUMNS = [
     "event_date",
     "event_type",
     "source",
+    "intent_mode",
+    "price_in_status",
+    "outcome_context",
     "period",
     "bullish_score",
     "model_verdict",
@@ -34,6 +37,9 @@ class HistoricalEvent:
     event_date: str
     event_type: str
     source: str
+    intent_mode: str = ""
+    price_in_status: str = ""
+    outcome_context: str = ""
     period: str = ""
     bullish_score: str = ""
     model_verdict: str = ""
@@ -71,7 +77,11 @@ def load_events(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
     with path.open("r", newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+        rows = list(csv.DictReader(handle))
+    normalized: list[dict[str, str]] = []
+    for row in rows:
+        normalized.append({column: row.get(column, "") for column in DATASET_COLUMNS})
+    return normalized
 
 
 def save_events(path: Path, rows: list[dict[str, Any]]) -> None:

@@ -7,15 +7,14 @@ import tempfile
 from pathlib import Path
 
 from openai import APIConnectionError, APIStatusError, AuthenticationError, RateLimitError
-
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 from finance_agent.agent import FinancialAnalysisAgent
 from finance_agent.config import load_settings, require_telegram_token
-from finance_agent.document_loader import SUPPORTED_FILE_EXTENSIONS, extract_document_text
 from finance_agent.dev_requests import create_dev_request, format_dev_request, format_dev_request_list, list_dev_requests
+from finance_agent.document_loader import SUPPORTED_FILE_EXTENSIONS, extract_document_text
 from finance_agent.event_drafts import (
     append_event_draft,
     approve_event_draft,
@@ -23,10 +22,9 @@ from finance_agent.event_drafts import (
     format_event_draft,
     format_event_draft_list,
     list_event_drafts,
+    mark_event_outcome,
     reject_event_draft,
 )
-from finance_agent.idx_research import IDXReportNotFound, find_and_download_idx_report, parse_idx_command
-from finance_agent.index_alpha import IndexAlphaClient, format_broker_summary, format_usage, parse_broker_summary_args
 from finance_agent.historical_dataset import (
     HistoricalEvent,
     append_event,
@@ -34,6 +32,8 @@ from finance_agent.historical_dataset import (
     enrich_price_labels,
     format_enrich_summary,
 )
+from finance_agent.idx_research import IDXReportNotFound, find_and_download_idx_report, parse_idx_command
+from finance_agent.index_alpha import IndexAlphaClient, format_broker_summary, format_usage, parse_broker_summary_args
 
 MAX_TELEGRAM_MESSAGE_LENGTH = 3900
 logger = logging.getLogger(__name__)
@@ -60,42 +60,50 @@ def acquire_single_instance_lock() -> None:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Kirim file laporan/berita, lalu saya analisis dengan konteks market global.\n\n"
-        "Perintah:\n"
-        "/analyze pertanyaan Anda - analisis teks langsung\n"
-        "/idx TICKER PERIODE - cari laporan IDX dan analisis\n"
-        "/broker TICKER FROM [TO] [INVESTOR] - broker summary Index Alpha\n"
-        "/indexalpha - cek quota Index Alpha\n"
-        "/score TEKS - beri bullish score untuk berita/post\n"
-        "/dataset_template - buat template dataset historis\n"
-        "/add_event TICKER YYYY-MM-DD TYPE - simpan event historis\n"
-        "/label_dataset - isi label harga t+3 dan t+7\n"
-        "/approve_event ID - setujui draft event\n"
-        "/reject_event ID - tolak draft event\n"
-        "/pending_events - lihat draft event\n"
-        "/dev_request TEKS - simpan request coding untuk Codex\n"
-        "/dev_requests - lihat request terakhir\n"
-        "/help - cara pakai"
+        "Kirim file laporan/berita, lalu saya analisis.\n\n"
+        "**Analisis**\n"
+        "/analyze [teks]\n"
+        "/idx [ticker] [periode]\n"
+        "/broker [ticker] [from] [to] [investor]\n"
+        "/score [teks]\n\n"
+        "**Dataset Event**\n"
+        "/pending_events\n"
+        "/approve_event [id]\n"
+        "/reject_event [id]\n"
+        "/mark_outcome [id] [hasil]\n"
+        "/add_event [ticker] [tanggal] [type]\n"
+        "/label_dataset\n\n"
+        "**Lainnya**\n"
+        "/indexalpha\n"
+        "/dev_request [teks]\n"
+        "/dev_requests\n"
+        "/help\n\n"
+        "Caption konteks:\n"
+        "- `untuk belajar dataset, setelah terbit naik 12% dalam 3 hari`\n"
+        "- `fresh, belum price in`"
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     extensions = ", ".join(sorted(SUPPORTED_FILE_EXTENSIONS))
     await update.message.reply_text(
-        "Cara pakai:\n"
-        "1. Kirim PDF/TXT/CSV/JSON/MD berisi laporan atau berita.\n"
-        "2. Tambahkan caption sebagai fokus analisis, misalnya: dampak ke IHSG dan USD/IDR.\n"
-        "3. Atau kirim /analyze diikuti teks berita.\n"
-        "4. Pakai /idx TICKER PERIODE untuk mencoba mencari laporan publik IDX.\n"
-        "5. Pakai /broker BBCA 2026-03-26 2026-03-26 all untuk broker summary Index Alpha.\n"
-        "6. Pakai /indexalpha untuk cek quota API.\n"
-        "7. Pakai /score lalu paste berita/post untuk bullish score.\n"
-        "8. Pakai /add_event untuk menyimpan event ke dataset historis.\n"
-        "9. Pakai /label_dataset untuk isi outcome harga otomatis.\n"
-        "10. Draft event akan dibuat otomatis setelah analisis dokumen; approve dengan /approve_event.\n"
-        "11. Pakai /dev_request untuk menyimpan permintaan coding tanpa push GitHub.\n\n"
-        "Contoh: /idx ESIP FY2025 cek kualitas arus kas\n"
-        f"Format file didukung: {extensions}"
+        "**Cara Pakai Singkat**\n"
+        "1. Kirim file atau teks.\n"
+        "2. Tambahkan caption/konteks.\n"
+        "3. Saya analisis lalu buat draft event bila relevan.\n"
+        "4. Jika dokumen live ternyata benar bergerak, pakai /mark_outcome.\n"
+        "5. Anda pilih simpan ke dataset atau tidak.\n\n"
+        "**Contoh Cepat**\n"
+        "- Upload file + caption: `fresh, belum price in`\n"
+        "- Upload file + caption: `untuk belajar dataset, setelah terbit naik 11% dalam 3 hari`\n"
+        "- `/idx ESIP FY2025 fresh, belum price in`\n"
+        "- `/broker BBCA 2026-03-26 2026-03-26 all`\n"
+        "- `/score paste berita di sini`\n"
+        "- `/mark_outcome EV-... setelah terbit naik 13% dalam 3 hari`\n\n"
+        "**Catatan**\n"
+        f"- Format file: {extensions}\n"
+        "- `learn_dataset` = dokumen historis yang outcome harganya sudah diketahui\n"
+        "- `live_fresh` = dokumen baru yang belum terbukti di chart"
     )
 
 
@@ -109,7 +117,9 @@ async def approve_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _reply_error(update, exc)
         return
     await update.message.reply_text(
-        f"Event disetujui dan masuk dataset: {approved['ticker']} {approved['event_date']} {approved['event_type']}"
+        "Event disetujui dan masuk dataset:\n"
+        f"{approved['ticker']} {approved['event_date']} {approved['event_type']}\n"
+        f"Mode: {approved.get('intent_mode', 'unspecified')} | Price-in: {approved.get('price_in_status', 'unknown')}"
     )
 
 
@@ -122,8 +132,28 @@ async def reject_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except Exception as exc:
         await _reply_error(update, exc)
         return
+    await update.message.reply_text(f"Draft event ditolak: {rejected['id']}")
+
+
+async def mark_outcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Format: /mark_outcome ID outcome singkat. Contoh: /mark_outcome EV-... setelah terbit naik 13% dalam 3 hari"
+        )
+        return
+
+    draft_id = context.args[0]
+    outcome_context = " ".join(context.args[1:]).strip()
+    try:
+        draft = mark_event_outcome(draft_id, outcome_context)
+    except Exception as exc:
+        await _reply_error(update, exc)
+        return
+
     await update.message.reply_text(
-        f"Draft event ditolak: {rejected['id']}"
+        "Outcome disimpan. Draft live diubah menjadi kandidat dataset dan menunggu approval.\n\n"
+        f"Approve: /approve_event {draft['id']}\n"
+        f"Reject: /reject_event {draft['id']}"
     )
 
 
@@ -175,10 +205,6 @@ async def bullish_score(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     await _reply_long(update, result)
-    if 'draft' in locals():
-        await message.reply_text(format_event_draft(draft))
-    if 'draft' in locals():
-        await update.message.reply_text(format_event_draft(draft))
 
 
 async def add_historical_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -198,6 +224,7 @@ async def add_historical_event(update: Update, context: ContextTypes.DEFAULT_TYP
         event_date=event_date,
         event_type=event_type,
         source="telegram_manual",
+        intent_mode="manual",
         notes=notes,
     )
     dataset_path = Path("data/historical_events.csv")
@@ -272,6 +299,15 @@ async def analyze_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not question:
         await update.message.reply_text("Tulis pertanyaannya setelah /analyze.")
         return
+    if _looks_like_context_only_request(question):
+        await update.message.reply_text(
+            "Teks /analyze masih terlalu tipis untuk analisis forensik dokumen.\n\n"
+            "Agar hasil tidak generik:\n"
+            "1) Upload file lapkeu lalu beri caption fokus analisis, atau\n"
+            "2) Pakai /idx TICKER PERIODE untuk ambil laporan publik.\n\n"
+            "Contoh: /idx KETR FY2025 cek struktur pembiayaan, pihak berelasi, dan puzzle backbone kabel laut."
+        )
+        return
 
     await update.message.chat.send_action(ChatAction.TYPING)
     await update.message.reply_text("Sedang saya analisis. Tunggu sebentar...")
@@ -307,9 +343,23 @@ async def analyze_idx_report(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             downloaded = find_and_download_idx_report(request, Path(temp_dir))
             focus = request.focus or f"Analisis forensik laporan {request.ticker} {request.period or ''}".strip()
-            question = f"{focus}\nSaham: {request.ticker}\nPeriode: {request.period or 'tidak disebutkan'}\nBursa: IDX\nSumber laporan: {downloaded.source_url}"
+            question = (
+                f"{focus}\n"
+                f"Saham: {request.ticker}\n"
+                f"Periode: {request.period or 'tidak disebutkan'}\n"
+                f"Bursa: IDX\n"
+                f"Sumber laporan: {downloaded.source_url}"
+            )
+            document_text = extract_document_text(downloaded.path)
             agent = FinancialAnalysisAgent(load_settings())
             result = agent.analyze(file_path=downloaded.path, question=question)
+            draft = create_event_draft_from_document(
+                file_name=downloaded.path.name,
+                document_text=document_text,
+                question=raw_query,
+                source="idx_best_effort",
+            )
+            append_event_draft(draft)
         except IDXReportNotFound as exc:
             await update.message.reply_text(str(exc))
             return
@@ -318,6 +368,7 @@ async def analyze_idx_report(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
     await _reply_long(update, result)
+    await update.message.reply_text(format_event_draft(draft))
 
 
 async def analyze_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -363,6 +414,7 @@ async def analyze_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
 
     await _reply_long(update, result)
+    await message.reply_text(format_event_draft(draft))
 
 
 async def _reply_long(update: Update, text: str) -> None:
@@ -414,6 +466,10 @@ async def _reply_error(update: Update, exc: Exception) -> None:
         )
         return
 
+    if isinstance(exc, ValueError):
+        await message.reply_text(str(exc))
+        return
+
     await message.reply_text("Terjadi error saat menganalisis file. Cek terminal untuk detail teknisnya.")
 
 
@@ -421,6 +477,25 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.exception("Unhandled Telegram error", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message is not None:
         await _reply_error(update, context.error or RuntimeError("Unknown Telegram error"))
+
+
+def _looks_like_context_only_request(question: str) -> bool:
+    lowered = question.lower().strip()
+    if len(lowered) >= 220:
+        return False
+
+    weak_keywords = ["analisis", "lapkeu", "laporan", "saham", "ticker", "cek", "review"]
+    has_weak_keyword = any(keyword in lowered for keyword in weak_keywords)
+    has_number_context = any(ch.isdigit() for ch in lowered)
+    has_multi_sentence = lowered.count(".") + lowered.count("\n") >= 2
+    has_document_signal = any(
+        keyword in lowered
+        for keyword in [
+            "catatan", "arus kas", "liabilitas", "piutang", "related party", "pihak berelasi",
+            "covenant", "obligasi", "kontrak", "akuisisi", "merger", "backbone", "kabel laut",
+        ]
+    )
+    return has_weak_keyword and not has_document_signal and not has_multi_sentence and not has_number_context
 
 
 def main() -> None:
@@ -439,6 +514,7 @@ def main() -> None:
     application.add_handler(CommandHandler("score", bullish_score))
     application.add_handler(CommandHandler("approve_event", approve_event))
     application.add_handler(CommandHandler("reject_event", reject_event))
+    application.add_handler(CommandHandler("mark_outcome", mark_outcome))
     application.add_handler(CommandHandler("pending_events", show_pending_events))
     application.add_handler(CommandHandler("dev_request", save_dev_request))
     application.add_handler(CommandHandler("dev_requests", show_dev_requests))

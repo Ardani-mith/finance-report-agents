@@ -136,6 +136,7 @@ def format_market_snapshot(snapshot: dict) -> str:
         f"Market snapshot as of UTC: {snapshot['as_of_utc']}",
         f"Provider: {snapshot['provider']}",
         f"Note: {snapshot['note']}",
+        f"Regime hint: {_summarize_market_regime(snapshot)}",
         "",
         "| Ticker | Name | Price | Change % | Currency | State |",
         "| --- | --- | ---: | ---: | --- | --- |",
@@ -201,3 +202,55 @@ def _calc_return_pct(price_start: float | None, price_end: float | None) -> floa
     if price_start in (None, 0) or price_end is None:
         return None
     return ((price_end - price_start) / price_start) * 100
+
+
+def _summarize_market_regime(snapshot: dict) -> str:
+    by_ticker = {item["ticker"]: item for item in snapshot.get("items", [])}
+
+    def change(symbol: str) -> float | None:
+        item = by_ticker.get(symbol)
+        if not item:
+            return None
+        return item.get("change_percent")
+
+    hints: list[str] = []
+
+    vix = change("^VIX")
+    dxy = change("DX-Y.NYB")
+    tnx = change("^TNX")
+    oil = change("CL=F")
+    gold = change("GC=F")
+    jkse = change("^JKSE")
+
+    if vix is not None:
+        if vix >= 5:
+            hints.append("risk-off menguat")
+        elif vix <= -5:
+            hints.append("risk appetite membaik")
+    if dxy is not None:
+        if dxy > 0.3:
+            hints.append("USD cenderung menguat")
+        elif dxy < -0.3:
+            hints.append("USD melemah")
+    if tnx is not None:
+        if tnx > 0.5:
+            hints.append("yield AS naik, duration sensitif")
+        elif tnx < -0.5:
+            hints.append("yield AS turun, valuasi growth terbantu")
+    if oil is not None:
+        if oil > 1:
+            hints.append("energi menguat")
+        elif oil < -1:
+            hints.append("energi melemah")
+    if gold is not None:
+        if gold > 1:
+            hints.append("demand defensif/logam mulia naik")
+    if jkse is not None:
+        if jkse > 0.75:
+            hints.append("IHSG cukup suportif")
+        elif jkse < -0.75:
+            hints.append("IHSG sedang tertekan")
+
+    if not hints:
+        return "campuran, tidak ada sinyal makro dominan dari snapshot singkat"
+    return "; ".join(hints[:4])
